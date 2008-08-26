@@ -1,0 +1,15 @@
+dtt
+- uses `fortune` to generate typing exercises by default
+- stats are saved, but the analysis tools here don't do much yet
+- add cooler generation stuff to train on specific problem areas
+  - thinking about converting to haskell to ease that stuff
+
+to use bkrd
+- create numbered passages in ~/.bkrd/cur/{0..}
+  - src/chunk.py is good for breaking up a long book into numbered passages
+- echo 0 > ~/.bkrd/cur/num
+- echo <max-num> > ~/.bkrd/cur/max
+- you can have several book passage dirs and just link ~/.bkrd/cur to cur one
+- sorry this setup is kind of ghetto right now.  todos:
+  - don't require max to be manually specified
+  - do chunking in real time, or simplify chunking process

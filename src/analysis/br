@@ -1,0 +1,1 @@
+ghc --make -o fun fun.hs && ./fun "$@"

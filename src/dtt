@@ -1,0 +1,247 @@
+#!/usr/bin/env python
+#
+# dynamic typing tutor
+#
+# currently set up to use 'fortune' program for sentences
+# saves typing error stats just in flat file
+# heavy focus on no-letter-left-behind: huge typo penalty/annoyance (5s)
+#
+#
+# big picture
+#
+# we will focus on individual letters and bigrams
+# we wouldn't mind some support for trigrams and n-grams beyond
+# we will not think too much about difficulty factors beyond that
+#
+# we will think about accuracy and speed
+# we believe that it is better to be accurate and slow first then work on speed
+# we are interested in extremely high levels of accuracy (think 100%)
+#
+# we will think about ways to keep things interesting
+# the funny sentences that a random grammar makes should be interesting
+# some support for continuous "thought" passages (wordnet) would help too
+# and discussions streams (linguistic pragmatics, really) (
+#   - rhetorical question and answer
+#   - contrasts, parallels, and lists
+#   - recurring "characters"
+#   - fake essay generators
+#   - 5x5 essays, limericks (dirty words!)
+#   - wiki articles
+#   - fortune
+# ) 
+
+# extreme rules
+# - at any time we have a required accuracy and a required wpm
+#   - we may also have (higher) goal accuracies and wpms
+#   - it would not be unreasonable to make the required accuracy be 100%
+# - if you do not attain the requireds, you have to go again and again
+# - backspacing is so not allowed: get it right the first time
+# - we record mistakes/totals for each {1..n}-gram encountered
+#   - only count how we do on _first_time_ trying exercise
+#   - n = 3 is probably good
+
+# generate random sentences with 
+#
+# stage 1: non-dynamic generation, start recording data
+# - wiki articles or fortune
+
+from optparse import OptionParser
+import curses as crs
+import os
+import re
+import simplejson as sjn
+import string as stg
+import subprocess as spc
+import sys
+import time
+
+opt_p = OptionParser()
+opt_p.add_option('-i', '--inc',
+    help='increment number in this file by number of passages completed')
+(opts, args) = opt_p.parse_args()
+
+class Log:
+    def __init__(self, fn):
+        self.f = file(fn, 'a')
+    def log(self, s):
+        print >> self.f, s
+    def close(self):
+        self.f.close()
+
+# consider previous n chars for typo statistics
+lookBack = 2
+
+def_cmd_fcn = lambda x: 'fortune -e'
+
+cAll = {}
+cWrong = {}
+
+def dInc(d, k):
+    try:
+        d[k] += 1
+    except KeyError:
+        d[k] = 1
+
+#wSToSp = stg.maketrans('\t\n', '  ')
+wSToSp = stg.maketrans('\t', ' ')
+overTwoSp = re.compile(' {3,}')
+initialNonLtr = re.compile('^ *', re.M | re.S)
+
+def genTypex(cmd_fcn, n):
+    '''generate a typing-exercise
+    eventually this can be based on various feedback on how you are doing
+    or what you feel like practicing'''
+    tx = None
+    while not tx:
+        p = spc.Popen(cmd_fcn(n), shell=True, stdout=spc.PIPE)
+        p.wait()
+    
+        tx = [l.strip().replace('\t', ' ') for l in p.stdout.readlines()]
+        for txL in tx:
+            # FIXME: just split lines, and use curses width?
+            if len(txL) > 80:
+                tx = None
+            break
+        if not tx:
+            continue
+        tx = '\n'.join(tx)
+        tx = re.sub(initialNonLtr, '', tx)
+    return tx
+
+def addstrm(scr, x, y, s):
+    try:
+        # hack to not fatal on screen size bs
+        scr.addstr(x, y, s)
+    except Exception, e:
+        pass
+
+def main(scr, logF, args):
+    colGood, colWrong, colDoneGood, colDoneWrong = range(1, 5)
+    crs.init_pair(colGood, crs.COLOR_GREEN, crs.COLOR_BLACK)
+    crs.init_pair(colWrong, crs.COLOR_WHITE, crs.COLOR_RED)
+    crs.init_pair(colDoneGood, crs.COLOR_YELLOW, crs.COLOR_BLACK)
+    crs.init_pair(colDoneWrong, crs.COLOR_YELLOW, crs.COLOR_RED)
+  
+    sessionTxLen = 0
+    sessionTimeDelta = 0
+  
+    if args:
+        argn = len(args)
+        def cmd_fcn(n):
+            return 'cat ' + args[n % argn]
+    else:
+        cmd_fcn = def_cmd_fcn
+
+    n = 0
+    while True:
+        tx = None
+        while not tx:
+            tx = genTypex(cmd_fcn, n)
+        n += 1
+        txLen = len(tx)
+    
+        lineNum = tx.count('\n') + 2
+        addstrm(scr, 0, 0, tx)
+        scr.move(0, 0)
+        scr.refresh()
+        txTime = time.time()
+    
+        x = 0
+        y = 0
+        pos = 0
+    
+        attrGood = crs.color_pair(colGood)
+        attrWrong = crs.color_pair(colWrong) | crs.A_BOLD
+        attrDoneGood = crs.color_pair(colDoneGood)
+        attrDoneWrong = crs.color_pair(colDoneWrong)
+    
+        while pos < txLen:
+            c = scr.getch()
+            if c == 12:
+                continue
+            cGoodCh = tx[pos]
+            cGood = ord(cGoodCh)
+            if c == cGood:
+                correct = True
+                attr = attrGood
+                attrDone = attrDoneGood
+            else:
+                correct = False
+                attr = attrWrong
+                attrDone = attrDoneWrong
+                if c < 32 or c >= 210:
+                    c = ord(' ')
+                for i in range(lookBack+1):
+                    startPos = pos - 1 - i
+                    if startPos < 0:
+                        break
+                    dInc(cWrong, tx[startPos:pos])
+            for i in range(lookBack+1):
+                startPos = pos - 1 - i
+                if startPos < 0:
+                    break
+                dInc(cAll, tx[startPos:pos])
+            try:
+                # past end of screen errors
+                scr.addch(y + lineNum, x, c, attr)
+            except:
+                pass
+            scr.addch(y, x, cGood, attrDone)
+            if not correct:
+                crs.flash()
+                for i in range(6, 0, -1):
+                    addstrm(scr, lineNum - 1, 0, str(i))
+                    scr.refresh()
+                    time.sleep(1)
+                crs.flushinp()
+                addstrm(scr, lineNum - 1, 0, ' ')
+                scr.addch(y, x, cGood, attrDone)
+                scr.refresh()
+                crs.flash()
+            if cGood == 10:
+                y += 1
+                x = 0
+            else:
+                x += 1
+            pos += 1
+      
+        txLen = len(tx)
+        timeDelta = time.time() - txTime
+        cpm = txLen / timeDelta * 60
+        wpm = cpm / 5
+        sessionTxLen += txLen
+        sessionTimeDelta += timeDelta
+        sessionCpm = sessionTxLen / sessionTimeDelta * 60
+        sessionWpm = sessionCpm / 5
+        addstrm(scr, y + lineNum + 1, 0, 'wpm %2.2f' % wpm)
+        summary = (n, txLen, sessionWpm)
+        addstrm(scr, y + lineNum + 2, 0, summary)
+        addstrm(scr, y + lineNum + 3, 0, 'press q to quit or c to continue')
+        partyOver = False
+        while True:
+            c = scr.getch()
+            if c == ord('q'):
+                partyOver = True
+                break
+            elif c == ord('c'):
+                break
+        logF.log(sjn.dumps({'chars':txLen, 'wpm':sessionWpm}))
+        logF.log(sjn.dumps(cWrong))
+        logF.log(sjn.dumps(cAll))
+        if partyOver:
+            break
+        scr.clear()
+    return summary
+
+logF = Log(os.getenv('HOME')+'/.dtt')
+(n, txLen, sessionWpm) = crs.wrapper(main, logF, args)
+if opts.inc:
+    f = file(opts.inc)
+    i = int(f.readline())
+    f.close()
+    f = file(opts.inc, 'w')
+    print >> f, i + n
+    f.close()
+logF.close()
+# need extra print bc of curses bs to get clean line for last-line wrappers
+print 'passages %d, chars %d, wpm %2.2f' % (n, txLen, sessionWpm)
