@@ -87,7 +87,7 @@ wSToSp = stg.maketrans('\t', ' ')
 overTwoSp = re.compile(' {3,}')
 initialNonLtr = re.compile('^ *', re.M | re.S)
 
-def genTypex(cmd_fcn, n):
+def gen_typex(cmd_fcn, n):
     '''generate a typing-exercise
     eventually this can be based on various feedback on how you are doing
     or what you feel like practicing'''
@@ -97,9 +97,9 @@ def genTypex(cmd_fcn, n):
         p.wait()
     
         tx = [l.strip().replace('\t', ' ') for l in p.stdout.readlines()]
-        for txL in tx:
+        for tx_l in tx:
             # FIXME: just split lines, and use curses width?
-            if len(txL) > 80:
+            if len(tx_l) > 80:
                 tx = None
             break
         if not tx:
@@ -136,7 +136,7 @@ def main(scr, logF, args):
     while True:
         tx = None
         while not tx:
-            tx = genTypex(cmd_fcn, n)
+            tx = gen_typex(cmd_fcn, n)
         n += 1
         txLen = len(tx)
     
@@ -187,7 +187,14 @@ def main(scr, logF, args):
             except:
                 pass
             scr.addch(y, x, cGood, attrDone)
-            if not correct:
+            if correct:
+                pos += 1
+                if cGood == 10:
+                    y += 1
+                    x = 0
+                else:
+                    x += 1
+            else:
                 crs.flash()
                 for i in range(6, 0, -1):
                     addstrm(scr, lineNum - 1, 0, str(i))
@@ -198,12 +205,6 @@ def main(scr, logF, args):
                 scr.addch(y, x, cGood, attrDone)
                 scr.refresh()
                 crs.flash()
-            if cGood == 10:
-                y += 1
-                x = 0
-            else:
-                x += 1
-            pos += 1
       
         txLen = len(tx)
         timeDelta = time.time() - txTime
