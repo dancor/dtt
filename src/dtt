@@ -28,7 +28,7 @@
 #   - 5x5 essays, limericks (dirty words!)
 #   - wiki articles
 #   - fortune
-# ) 
+# )
 
 # extreme rules
 # - at any time we have a required accuracy and a required wpm
@@ -40,7 +40,7 @@
 #   - only count how we do on _first_time_ trying exercise
 #   - n = 3 is probably good
 
-# generate random sentences with 
+# generate random sentences with
 #
 # stage 1: non-dynamic generation, start recording data
 # - wiki articles or fortune
@@ -58,6 +58,10 @@ import time
 opt_p = OptionParser()
 opt_p.add_option('-i', '--inc',
     help='increment number in this file by number of passages completed')
+opt_p.add_option('-d', '--desc',
+    help='describe the typing-exercise (for the log file only)')
+opt_p.add_option('-T', '--typo-delay',
+    help='seconds to delay on typo')
 (opts, args) = opt_p.parse_args()
 
 class Log:
@@ -68,24 +72,20 @@ class Log:
     def close(self):
         self.f.close()
 
-# consider previous n chars for typo statistics
-lookBack = 2
-
 def_cmd_fcn = lambda x: 'fortune -e'
 
-cAll = {}
-cWrong = {}
-
-def dInc(d, k):
+def dAppend(d, k, v):
     try:
-        d[k] += 1
+        d[k].append(v)
     except KeyError:
-        d[k] = 1
+        d[k] = [v]
 
 #wSToSp = stg.maketrans('\t\n', '  ')
 wSToSp = stg.maketrans('\t', ' ')
 overTwoSp = re.compile(' {3,}')
 initialNonLtr = re.compile('^ *', re.M | re.S)
+
+typo_delay = int(opts.typo_delay) if opts.typo_delay else 6
 
 def gen_typex(cmd_fcn, n):
     '''generate a typing-exercise
@@ -93,9 +93,10 @@ def gen_typex(cmd_fcn, n):
     or what you feel like practicing'''
     tx = None
     while not tx:
-        p = spc.Popen(cmd_fcn(n), shell=True, stdout=spc.PIPE)
+        cmd = cmd_fcn(n)
+        p = spc.Popen(cmd, shell=True, stdout=spc.PIPE)
         p.wait()
-    
+
         tx = [l.strip().replace('\t', ' ') for l in p.stdout.readlines()]
         for tx_l in tx:
             # FIXME: just split lines, and use curses width?
@@ -106,7 +107,7 @@ def gen_typex(cmd_fcn, n):
             continue
         tx = '\n'.join(tx)
         tx = re.sub(initialNonLtr, '', tx)
-    return tx
+    return (opts.desc if opts.desc else cmd, tx)
 
 def addstrm(scr, x, y, s):
     try:
@@ -121,10 +122,10 @@ def main(scr, logF, args):
     crs.init_pair(colWrong, crs.COLOR_WHITE, crs.COLOR_RED)
     crs.init_pair(colDoneGood, crs.COLOR_YELLOW, crs.COLOR_BLACK)
     crs.init_pair(colDoneWrong, crs.COLOR_YELLOW, crs.COLOR_RED)
-  
+
     sessionTxLen = 0
     sessionTimeDelta = 0
-  
+
     if args:
         argn = len(args)
         def cmd_fcn(n):
@@ -134,27 +135,29 @@ def main(scr, logF, args):
 
     n = 0
     while True:
-        tx = None
-        while not tx:
-            tx = gen_typex(cmd_fcn, n)
+        (desc, tx) = gen_typex(cmd_fcn, n)
+        if not tx:
+            print >> sys.stderr, 'typing-exercise generation failed?'
+            break
         n += 1
         txLen = len(tx)
-    
+
         lineNum = tx.count('\n') + 2
         addstrm(scr, 0, 0, tx)
         scr.move(0, 0)
         scr.refresh()
         txTime = time.time()
-    
+
         x = 0
         y = 0
         pos = 0
-    
+        cWrong = {}
+
         attrGood = crs.color_pair(colGood)
         attrWrong = crs.color_pair(colWrong) | crs.A_BOLD
         attrDoneGood = crs.color_pair(colDoneGood)
         attrDoneWrong = crs.color_pair(colDoneWrong)
-    
+
         while pos < txLen:
             c = scr.getch()
             if c == 12:
@@ -169,18 +172,9 @@ def main(scr, logF, args):
                 correct = False
                 attr = attrWrong
                 attrDone = attrDoneWrong
+                dAppend(cWrong, pos, chr(c))
                 if c < 32 or c >= 210:
                     c = ord(' ')
-                for i in range(lookBack+1):
-                    startPos = pos - 1 - i
-                    if startPos < 0:
-                        break
-                    dInc(cWrong, tx[startPos:pos])
-            for i in range(lookBack+1):
-                startPos = pos - 1 - i
-                if startPos < 0:
-                    break
-                dInc(cAll, tx[startPos:pos])
             try:
                 # past end of screen errors
                 scr.addch(y + lineNum, x, c, attr)
@@ -196,7 +190,7 @@ def main(scr, logF, args):
                     x += 1
             else:
                 crs.flash()
-                for i in range(6, 0, -1):
+                for i in range(typo_delay, 0, -1):
                     addstrm(scr, lineNum - 1, 0, str(i))
                     scr.refresh()
                     time.sleep(1)
@@ -205,7 +199,7 @@ def main(scr, logF, args):
                 scr.addch(y, x, cGood, attrDone)
                 scr.refresh()
                 crs.flash()
-      
+
         txLen = len(tx)
         timeDelta = time.time() - txTime
         cpm = txLen / timeDelta * 60
@@ -226,23 +220,29 @@ def main(scr, logF, args):
                 break
             elif c == ord('c'):
                 break
-        logF.log(sjn.dumps({'chars':txLen, 'wpm':sessionWpm}))
-        logF.log(sjn.dumps(cWrong))
-        logF.log(sjn.dumps(cAll))
+        def log_label(label, x):
+            logF.log(label + ': ' + sjn.dumps(x))
+        logF.log('typing-exercise completed at %s:' % sjn.dumps(time.time()))
+        log_label('desc', desc)
+        log_label('n', n)
+        log_label('typo_delay', typo_delay)
+        log_label('wpm', wpm)
+        log_label('text', tx)
+        log_label('wrong', cWrong)
         if partyOver:
             break
         scr.clear()
     return summary
 
-logF = Log(os.getenv('HOME')+'/.dtt')
-(n, txLen, sessionWpm) = crs.wrapper(main, logF, args)
-if opts.inc:
-    f = file(opts.inc)
-    i = int(f.readline())
-    f.close()
-    f = file(opts.inc, 'w')
-    print >> f, i + n
-    f.close()
-logF.close()
-# need extra print bc of curses bs to get clean line for last-line wrappers
-print 'passages %d, chars %d, wpm %2.2f' % (n, txLen, sessionWpm)
+if __name__ == '__main__':
+    logF = Log(os.path.join(os.getenv('HOME'), '.dtt', 'log'))
+    (n, txLen, sessionWpm) = crs.wrapper(main, logF, args)
+    if opts.inc:
+        f = file(opts.inc)
+        i = int(f.readline())
+        f.close()
+        f = file(opts.inc, 'w')
+        print >> f, i + n
+        f.close()
+    logF.close()
+    print 'passages %d, chars %d, wpm %2.2f' % (n, txLen, sessionWpm)
